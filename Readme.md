@@ -4,12 +4,16 @@ A simple yet powerful p2p file sharing application powered by Rust.
 
 <img src="https://raw.githubusercontent.com/NoelleStern/Tappi-share/main/assets/tappi-demo.gif" alt="Client at work">
 
-<img src="https://raw.githubusercontent.com/NoelleStern/Tappi-share/main/assets/TappiHeadFlippedPadded.png" alt="Tappi" height="128" align="left"> 
+<table>
+  <tr>
+  <td><img src="https://raw.githubusercontent.com/NoelleStern/Tappi-share/main/assets/TappiHeadFlippedPadded.png" alt="Tappi" width="512"></td>
+  <td>
 
-**Why Tappi-share?**
-If you always wanted a *simple*, *open-source*, *secure* and *P2P* file-sharing solution, then I might suit you! Please, give me a shot!
+  **Why Tappi-share?** If you always wanted a *simple*, *open-source*, *secure* and *P2P* file-sharing solution, then I might suit you! Please, give me a shot!
 
-<br clear="left"/>
+  </td>
+  </tr>
+</table>
 
 ---
 
@@ -35,25 +39,26 @@ cargo install tappi-share
 
 Then, to send your files, simply launch the app in client mode, add your files, pick the protocol, the most convenient being MQTT, and then you just have to fill the mandatory protocol flags like in this case local name and remote name:
 
-<span style="color: orange;">Note:</span> the <kbd>-f</kbd> flag is hungry and so <kbd>;</kbd> terminator might come in handy.
+👉 **Note:** *the <kbd>-f</kbd> flag is hungry and so <kbd>;</kbd> terminator might come in handy.*
 ```shell
-cargo tappi-share client -f file1.ext file2.ext ; mqtt -l name1 -r name2
+tappi-share client -f file1.ext file2.ext ; mqtt -l name1 -r name2
 ```
 
 To now receive the files you can launch the client like this:
 ```shell
-cargo tappi-share client mqtt -l name2 -r name1
+tappi-share client mqtt -l name2 -r name1
 ```
 
 To launch the WebSocket-based signaling server, you can just do the following:
-<span style="color: orange;">Note:</span> signaling server is currently not production-ready and mostly exists for debugging purposes.
+
+👉 **Note:** *signaling server is currently not production-ready and mostly exists for debugging purposes.*
 ```shell
-cargo tappi-share server
+tappi-share server
 ```
 
 And, lastly, to see all of the available application options don't hesitate to make use of the <kbd>-h</kbd> flag:
 ```shell
-cargo tappi-share -h
+tappi-share -h
 ```
 ---
 
@@ -71,8 +76,6 @@ In case WebRTC fails to establish a direct connection, you might want to setup a
 
 Sample `docker-compose.yml`:
 ```yml
-version: '3.8'
-
 services:
   coturn:
     image: instrumentisto/coturn
@@ -113,7 +116,7 @@ Now you can run the following command to start the container:
 docker-compose up -d
 ```
 
-Don't forget to make sure `3478 UDP/TCP`, `5349 TCP` and `49160-49200 UDP` ports are open on your server. Now you should be able to access it as `turn:<IP/DOMAIN_NAME>:3478`.
+Don't forget to make sure `3478 UDP/TCP`, `5349 TCP` and `49160-49200 UDP` ports are open on your server. Now you should be able to access it as `turn:<YOUR_PUBLIC_IP>:3478`.
 
 To quickly remove the container simply run:
 ```bash

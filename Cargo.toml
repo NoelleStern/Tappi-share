@@ -1,6 +1,6 @@
 [package]
 name = "tappi-share"
-version = "1.0.0"
+version = "1.0.1"
 authors = ["Noelle Stern"]
 license = "AGPL-3.0"
 readme = "README.md"
