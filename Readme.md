@@ -15,12 +15,14 @@ A simple yet powerful p2p file sharing application powered by Rust.
   </tr>
 </table>
 
+[![Rust](https://img.shields.io/badge/rust-%23000000.svg?style=for-the-badge&logo=rust&logoColor=white)](https://rust-lang.org/)
+[![WebRTC](https://img.shields.io/badge/WebRTC-333333.svg?style=for-the-badge&logo=WebRTC&logoColor=white)](https://webrtc.org/)<br>
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 
 ---
 
 ## Features🔥
-  - 🚀 Effortless no-server<span style="color: orange;">*</span> two-way file sharing
+  - 🚀 Effortless no-server* two-way file sharing
   - 🔒 Secure WebRTC-based P2P connection
   - 📁 Folder sharing
   - 🛜 Multiple signaling protocols:
@@ -28,7 +30,7 @@ A simple yet powerful p2p file sharing application powered by Rust.
     - **Manual**
     - **MQTT**
 
-<span style="color: orange;">*</span>If WebRTC manages to establish a direct connection no relay server is needed
+*If WebRTC manages to establish a direct connection no relay server is needed
 
 ---
 
