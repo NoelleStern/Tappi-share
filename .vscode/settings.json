@@ -4,6 +4,7 @@
         "Catppuccin",
         "catpuccin",
         "chrono",
+        "codegen",
         "crossterm",
         "dashmap",
         "Deque",
