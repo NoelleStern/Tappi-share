@@ -28,7 +28,5 @@ impl Widget for &mut App {
         } else {
             render_error(self, area, buf);
         }
-
-        self.redraw = false;
     }
 }

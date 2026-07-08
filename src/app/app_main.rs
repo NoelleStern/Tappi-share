@@ -1,33 +1,31 @@
-use crossterm::event::{KeyCode, KeyEvent};
 use rat_focus::Focus;
+use std::time::Instant;
 use ratatui::DefaultTerminal;
-use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_util::sync::CancellationToken;
+use tokio::sync::mpsc::UnboundedReceiver;
+use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::{
-    app::{
-        app_event::AppEvent,
-        event::{BasicEvent, EventHandler},
-        file_manager::FileManager,
-        handlers::{
-            app_handler::AppHandler, client_handler::ClientHandler, server_handler::ServerHandler,
-        },
-        models::{ClientState, ErrorTX, Maid},
-    },
+    server,
     cli::{Cli, Commands, SignalingSolutions},
     client::{
         client_init::init,
         signaling::{negotiator::HandshakeState, signaling_manual::SignalingManual},
     },
-    server,
     ui::{
         theme::Theme,
         utils::{CombinedWidgetState, Shortcut},
         widgets::{
-            files_widget::FileListWidgetState, history_widget::HistoryWidgetState,
-            manual_handshake_widget::ManualHandshakeWidgetState, rooms_widget::RoomListWidgetState,
-            throbber::ThrobberStateCounter, users_widget::UserListWidgetState,
+            files_widget::FileListWidgetState, history_widget::HistoryWidgetState, users_widget::UserListWidgetState,
+            manual_handshake_widget::ManualHandshakeWidgetState, rooms_widget::RoomListWidgetState,throbber::ThrobberStateCounter,
         },
+    },
+    app::{
+        app_event::AppEvent,
+        file_manager::FileManager,
+        event::{BasicEvent, EventHandler},
+        models::{ClientState, ErrorTX, Maid},
+        handlers::{app_handler::AppHandler, client_handler::ClientHandler, server_handler::ServerHandler},
     },
 };
 
@@ -37,8 +35,9 @@ pub struct App {
     /// Should the application exit?
     pub exit: bool,
     /// Should the application redraw?
-    /// Tied directly to the tick event
     pub redraw: bool,
+    /// Last redraw timing
+    pub last_redraw: Instant,
     /// User-provided arguments
     pub args: Cli,
     /// General event handler
@@ -93,6 +92,7 @@ impl App {
             // App
             exit: false,
             redraw: true,
+            last_redraw: Instant::now(),
             args,
             events: EventHandler::new(),
             error: None,
@@ -144,15 +144,11 @@ impl App {
     }
 
     async fn main_loop(&mut self, terminal: &mut DefaultTerminal) -> color_eyre::Result<()> {
-        while !self.exit {
-            // Redraw
-            if self.redraw {
-                self.draw(terminal)?;
-            }
-
-            // Event loop
+        while !self.exit { // Event loop
+            self.try_redraw(terminal)?; // Redraw
             let error = tokio::select! {
                 event = self.events.next() => { // Event loop
+                    self.redraw = true; // Queue the redraw
                     let result = self.process_event(event?).await;
                     result.err()
                 }
@@ -161,6 +157,7 @@ impl App {
                 }
             };
 
+            // Process errors
             if let Some(err) = error {
                 log::error!("{}", err);
                 self.error = Some(err);
@@ -174,24 +171,18 @@ impl App {
     async fn error_loop(&mut self, terminal: &mut DefaultTerminal) -> color_eyre::Result<()> {
         // Simple error loop
         if self.error.is_some() {
-            loop {
-                // Redraw
-                if self.redraw {
-                    self.draw(terminal)?;
-                }
-
-                // Event loop
+            loop { // Event loop
+                self.try_redraw(terminal)?; // Redraw
                 let event = self.events.next().await?;
                 match event {
                     BasicEvent::Tick => {
                         self.on_tick();
                     }
                     BasicEvent::Crossterm(crossterm::event::Event::Key(key_event)) => {
-                        if key_event.is_release()
-                            && let KeyCode::Char('q') = key_event.code
-                        {
-                            break;
-                        }
+                        if  key_event.is_release()
+                            && let KeyCode::Char('q') = key_event.code{
+                                break;
+                            }
                     }
                     _ => {}
                 }
@@ -285,6 +276,16 @@ impl App {
         terminal.draw(|frame| frame.render_widget(self, frame.area()))?; // Redraw
         Ok(())
     }
+    /// Redraws at approximately every 33.33ms or around 30 fps
+    fn try_redraw(&mut self, terminal: &mut DefaultTerminal) -> color_eyre::Result<()> {
+        if  self.redraw 
+            && self.last_redraw.elapsed().as_millis() >= 33 {
+                self.redraw = false;
+                self.draw(terminal)?;
+                self.last_redraw = Instant::now();
+            }
+        Ok(())
+    }
 
     /// Handles the tick event of the terminal.
     ///
@@ -292,7 +293,6 @@ impl App {
     /// needs to be updated at a fixed frame rate. E.g. polling a server, updating an animation.
     pub fn on_tick(&mut self) {
         self.throbber_sc.update();
-        self.redraw = true;
     }
 
     pub fn focusable_widgets_client(&mut self) -> Vec<Box<&mut dyn CombinedWidgetState>> {
