@@ -1,7 +1,7 @@
 use ratatui::prelude::*;
 
-use crate::app::app_main::App;
 use crate::cli::Commands;
+use crate::app::app_main::App;
 use crate::ui::views::client_view::render as render_client;
 use crate::ui::views::error_view::render as render_error;
 use crate::ui::views::server_view::render as render_server;

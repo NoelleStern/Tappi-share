@@ -136,11 +136,7 @@ impl App {
         self.cancellation_token.cancel(); // Cancel all tasks
         self.error_loop(terminal).await?; // Show an error screen if something went wrong
 
-        if let Some(error) = self.error {
-            Err(error)
-        } else {
-            Ok(())
-        }
+        if let Some(error) = self.error { Err(error) } else { Ok(()) }
     }
 
     async fn main_loop(&mut self, terminal: &mut DefaultTerminal) -> color_eyre::Result<()> {
@@ -148,7 +144,6 @@ impl App {
             self.try_redraw(terminal)?; // Redraw
             let error = tokio::select! {
                 event = self.events.next() => { // Event loop
-                    self.redraw = true; // Queue the redraw
                     let result = self.process_event(event?).await;
                     result.err()
                 }
@@ -175,9 +170,7 @@ impl App {
                 self.try_redraw(terminal)?; // Redraw
                 let event = self.events.next().await?;
                 match event {
-                    BasicEvent::Tick => {
-                        self.on_tick();
-                    }
+                    BasicEvent::Tick => { self.on_tick(); },
                     BasicEvent::Crossterm(crossterm::event::Event::Key(key_event)) => {
                         if  key_event.is_release()
                             && let KeyCode::Char('q') = key_event.code{
@@ -199,20 +192,12 @@ impl App {
 
         // Handle app events
         if let BasicEvent::App(app_event) = event {
+            self.queue_redraw();
             match self.args.app_mode {
                 Commands::Client(_) => ClientHandler::handle_app_events(self, app_event)?,
                 Commands::Server(_) => ServerHandler::handle_app_events(self, app_event)?,
             }
         }
-
-        // Set shortcuts
-        let mut shortcuts: Vec<Shortcut> = vec![];
-        for cws in self.get_focusable_widgets() {
-            if cws.is_focused() {
-                shortcuts = cws.get_shortcuts();
-            }
-        }
-        self.widget_shortcuts = shortcuts;
 
         Ok(())
     }
@@ -242,10 +227,8 @@ impl App {
                     }
                 }
 
-                // Send resulting events
-                for ev in app_events {
-                    self.events.send_app_event(ev);
-                }
+                if !app_events.is_empty() { self.queue_redraw(); }
+                for ev in app_events { self.events.send_app_event(ev); } // Send resulting events
             }
             _ => {}
         }
@@ -257,15 +240,9 @@ impl App {
     fn handle_focus_key_events(&mut self, key_event: &KeyEvent) {
         if key_event.is_release() {
             match key_event.code {
-                KeyCode::Esc => {
-                    self.focus.none();
-                }
-                KeyCode::Tab => {
-                    self.focus.next();
-                }
-                KeyCode::BackTab => {
-                    self.focus.prev();
-                }
+                KeyCode::Esc =>     { self.focus.none(); },
+                KeyCode::Tab =>     { self.focus.next(); },
+                KeyCode::BackTab => { self.focus.prev(); },
                 _ => {}
             };
         }
@@ -273,6 +250,7 @@ impl App {
 
     /// Draws TUI
     fn draw(&mut self, terminal: &mut DefaultTerminal) -> color_eyre::Result<()> {
+        self.set_shortcuts(); // I don't think there's a good reason to update it more often
         terminal.draw(|frame| frame.render_widget(self, frame.area()))?; // Redraw
         Ok(())
     }
@@ -285,6 +263,15 @@ impl App {
                 self.last_redraw = Instant::now();
             }
         Ok(())
+    }
+    fn queue_redraw(&mut self) { self.redraw = true; }
+
+    fn set_shortcuts(&mut self) {
+        let mut shortcuts: Vec<Shortcut> = vec![];
+        for cws in self.get_focusable_widgets() {
+            if cws.is_focused() { shortcuts = cws.get_shortcuts(); }
+        }
+        self.widget_shortcuts = shortcuts;
     }
 
     /// Handles the tick event of the terminal.
