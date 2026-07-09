@@ -1,30 +1,32 @@
-use color_eyre::eyre::eyre;
-use std::sync::Arc;
-use tokio::sync::mpsc::UnboundedSender;
 use uuid::Uuid;
+use std::sync::Arc;
+use color_eyre::eyre::eyre;
+use tokio::sync::mpsc::UnboundedSender;
 use webrtc::peer_connection::{RTCPeerConnection, sdp::session_description::RTCSessionDescription};
 
 use crate::{
+    cli::{ClientArgs, SignalingSolutions},
     app::{
+        models::Maid,
         app_event::AppEventClient,
         event::{BasicEvent, BasicEventSenderExt},
-        models::Maid,
     },
-    cli::{ClientArgs, SignalingSolutions},
     client::{
         rtc_base::wait_for_ice_completion,
         signaling::{
-            signaling_manual::SignalingManual,
             signaling_mqtt::SignalingMqtt,
-            signaling_solution::{SignalingInterface, SignalingMessage},
+            signaling_manual::SignalingManual,
             signaling_websocket::SignalingWebsocket,
+            signaling_solution::{SignalingInterface, SignalingMessage},
         },
     },
 };
 
-// Connecting to server -> connected to server -> uuid sent ->
-// uuid received -> offer sent -> answer received -> connection established
-//               -> offer received -> answer sent ->
+// Common: Connecting to server -> connected to server -> uuid sent -> uuid received ->
+//
+// Impolite: offer sent -> answer received 
+// Common:                                 -> connection established
+// Polite:   offer received -> answer sent 
 #[derive(Clone, Debug, Default)]
 pub enum HandshakeState {
     #[default]

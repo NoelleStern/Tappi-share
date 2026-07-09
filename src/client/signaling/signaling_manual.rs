@@ -1,14 +1,14 @@
+use uuid::Uuid;
 use async_trait::async_trait;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
-use uuid::Uuid;
 
 use crate::{
+    cli::SignalingSolutionManualArgs,
     app::{
         app_event::AppEventClient,
         encrypt::try_encrypt_claims,
         event::{BasicEvent, BasicEventSenderExt},
     },
-    cli::SignalingSolutionManualArgs,
     client::signaling::{
         negotiator::UuidExt,
         signaling_solution::{SignalingInterface, SignalingMessage},
@@ -29,12 +29,7 @@ pub struct SignalingManual {
 impl SignalingManual {
     pub fn new(sender: UnboundedSender<BasicEvent>, args: SignalingSolutionManualArgs) -> Self {
         let (itx, irx) = unbounded_channel::<SignalingMessage>();
-        Self {
-            sender,
-            itx,
-            irx,
-            args,
-        }
+        Self { sender, itx, irx, args }
     }
 
     pub async fn init(&self) {

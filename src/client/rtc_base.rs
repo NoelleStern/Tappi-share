@@ -1,29 +1,31 @@
-use color_eyre::eyre::eyre;
-use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::mpsc::UnboundedSender;
-use tokio::sync::{Mutex, watch};
+use color_eyre::eyre::eyre;
 use webrtc::api::APIBuilder;
+use std::collections::HashMap;
+use tokio::sync::{Mutex, watch};
+use tokio::sync::mpsc::UnboundedSender;
 use webrtc::data_channel::RTCDataChannel;
-use webrtc::data_channel::data_channel_init::RTCDataChannelInit;
-use webrtc::ice_transport::ice_connection_state::RTCIceConnectionState;
-use webrtc::ice_transport::ice_gatherer_state::RTCIceGathererState;
-use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::peer_connection::RTCPeerConnection;
+use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::peer_connection::configuration::RTCConfiguration;
+use webrtc::data_channel::data_channel_init::RTCDataChannelInit;
+use webrtc::ice_transport::ice_gatherer_state::RTCIceGathererState;
+use webrtc::ice_transport::ice_connection_state::RTCIceConnectionState;
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 
-use crate::app::app_event::{AppEventClient, DebugDataChannel};
+use crate::cli::ClientArgs;
 use crate::app::event::BasicEvent;
-use crate::app::event::BasicEventSenderExt;
 use crate::app::file_manager::MetaData;
 use crate::app::models::{ErrorTX, Maid};
-use crate::cli::ClientArgs;
-use crate::client::message::handle_message;
+use crate::app::event::BasicEventSenderExt;
+use crate::client::message::{Mode, handle_message};
+use crate::app::app_event::{AppEventClient, DebugDataChannel};
+
 
 /// File output KiB threshold
 // I'm fighting the urge to make it 640K
 const THRESHOLD: usize = 128 * 1024; // 128KB sounds reasonable enough
+
 
 /// Manages WebRTC and signaling
 #[derive(Clone, Debug)]
@@ -77,10 +79,7 @@ impl WebConnection {
             maid.event_tx.clone(),
         );
 
-        Ok(Self {
-            pc,
-            buffer_watch_tx,
-        })
+        Ok(Self { pc, buffer_watch_tx })
     }
 
     fn conf(
@@ -195,6 +194,7 @@ fn on_message(
     sender: UnboundedSender<BasicEvent>,
 ) {
     let channel = dc.clone();
+    let mode = Arc::new(Mutex::new(Mode::default()));
     let metadata_map = Arc::new(Mutex::new(HashMap::<usize, MetaData>::new()));
     let metadata_bytes_map = Arc::new(Mutex::new(HashMap::<usize, Vec<u8>>::new()));
 
@@ -202,6 +202,7 @@ fn on_message(
         let channel = channel.clone();
         let buffer_watch_rx = buffer_watch_rx.clone();
         let sender = sender.clone();
+        let mode = mode.clone();
         let metadata_map = metadata_map.clone();
         let metadata_bytes_map = metadata_bytes_map.clone();
         let error_tx = error_tx.clone();
@@ -213,6 +214,7 @@ fn on_message(
                 channel,
                 buffer_watch_rx,
                 sender,
+                mode,
                 metadata_map,
                 metadata_bytes_map,
             )

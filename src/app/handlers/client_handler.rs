@@ -2,21 +2,22 @@ use color_eyre::eyre::Context;
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::{
+    cli::{Commands, SignalingSolutions},
     app::{
-        app_event::{AppEvent, AppEventClient, DebugDataChannel},
         app_main::App,
         encrypt::try_decrypt_claims,
-        file_manager::{FileProgressReport, InputFile, OutputFile, SpeedReport},
         handlers::app_handler::AppHandler,
+        app_event::{AppEvent, AppEventClient, DebugDataChannel},
+        file_manager::{FileProgressReport, InputFile, OutputFile, SpeedReport},
     },
-    cli::{Commands, SignalingSolutions},
     client::{
-        message::Message,
         payload,
+        message::Message,
         rtc_base::WebConnection,
         signaling::{negotiator::HandshakeState, signaling_solution::SignalingMessage},
     },
 };
+
 
 /// Struct for handling client app events
 pub struct ClientHandler;
@@ -131,13 +132,14 @@ fn on_disconnected(app: &mut App) {
 }
 fn on_message_received(app: &mut App, message: Message) {
     match message {
-        Message::TextMessage(_) => {} // TODO: implement
+        Message::TextMessage(_) => {}, // TODO: implement
         Message::FilePacketReceived(report) => {
             app.file_manager.add_output_report(report);
-        }
+        },
         Message::FileReceived(id) => {
             app.file_manager.set_output_finished(id);
-        }
+        },
+        _ => ()
     }
 }
 fn on_report_file_speed(app: &mut App, report: SpeedReport) {
@@ -207,26 +209,25 @@ fn send_file_data(app: &mut App, ddc: &DebugDataChannel, output_file: &OutputFil
     }
 }
 fn send_all_meta(app: &mut App, ddc: DebugDataChannel) {
-    if let Commands::Client(client_args) = &app.args.app_mode
-        && let Some(wc) = &app.client_state.wc
-    {
-        let maid = app.get_maid();
-        let dc = ddc.dc.clone();
+    if  let Commands::Client(client_args) = &app.args.app_mode
+        && let Some(wc) = &app.client_state.wc {
+            let maid = app.get_maid();
+            let dc = ddc.dc.clone();
 
-        let mut buffer_watch_rx = wc.buffer_watch_tx.subscribe();
-        let output_files = app.file_manager.output_queue.clone();
-        let chunk_size = client_args.chunk_size;
+            let mut buffer_watch_rx = wc.buffer_watch_tx.subscribe();
+            let output_files = app.file_manager.output_queue.clone();
+            let chunk_size = client_args.chunk_size;
 
-        tokio::spawn(async move {
-            let token = maid.token.child_token();
-            tokio::select! {
-                _ = token.cancelled() => {},
-                result = payload::send_all_meta(
-                    dc, &output_files, chunk_size, &mut buffer_watch_rx, Some(&maid.event_tx)
-                ) => {
-                    if let Err(err) = result { maid.error_tx.send_error(err); }
-                },
-            }
-        });
-    }
+            tokio::spawn(async move {
+                let token = maid.token.child_token();
+                tokio::select! {
+                    _ = token.cancelled() => {},
+                    result = payload::send_all_meta(
+                        dc, &output_files, chunk_size, &mut buffer_watch_rx, Some(&maid.event_tx)
+                    ) => {
+                        if let Err(err) = result { maid.error_tx.send_error(err); }
+                    },
+                }
+            });
+        }
 }

@@ -2682,28 +2682,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rmp"
-version = "0.8.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ba8be72d372b2c9b35542551678538b562e7cf86c3315773cae48dfbfe7790c"
-dependencies = [
- "num-traits",
-]
-
-[[package]]
-name = "rmpp"
-version = "0.1.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "356c2f71388b5563d4150506f459e08140b582c112fc7ab22734bb4866e711f6"
-dependencies = [
- "byteorder",
- "rmp",
- "serde",
- "serde_json",
- "wasm-bindgen",
-]
-
-[[package]]
 name = "ron"
 version = "0.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3373,7 +3351,6 @@ dependencies = [
  "ratatui",
  "ratatui-macros",
  "regex",
- "rmpp",
  "rumqttc",
  "serde",
  "serde_json",
@@ -3972,8 +3949,6 @@ dependencies = [
  "cfg-if",
  "once_cell",
  "rustversion",
- "serde",
- "serde_json",
  "wasm-bindgen-macro",
  "wasm-bindgen-shared",
 ]

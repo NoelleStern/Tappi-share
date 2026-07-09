@@ -1,16 +1,13 @@
-use std::{
-    fmt::{self, Debug},
-    sync::Arc,
-};
+use std::{fmt::{self, Debug},sync::Arc};
 use webrtc::data_channel::RTCDataChannel;
 
 use crate::{
+    server::types::{RoomId, RoomUser, UserMessage},
+    client::{message::Message, rtc_base::WebConnection, signaling::negotiator::HandshakeState},
     app::{
         event::BasicEvent,
         file_manager::{FileProgressReport, InputFile, SpeedReport},
     },
-    client::{message::Message, rtc_base::WebConnection, signaling::negotiator::HandshakeState},
-    server::types::{RoomId, RoomUser, UserMessage},
 };
 
 /// Application events.

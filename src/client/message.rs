@@ -1,29 +1,46 @@
-use rmpp::MsgPackEntry;
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::ffi::{OsStr, OsString};
-use std::fs::{self, File, create_dir_all};
+use std::sync::Arc;
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::Arc;
-use tokio::sync::mpsc::UnboundedSender;
+use std::collections::HashMap;
 use tokio::sync::{Mutex, watch};
+use std::ffi::{OsStr, OsString};
+use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc::UnboundedSender;
 use webrtc::data_channel::RTCDataChannel;
+use std::fs::{self, File, create_dir_all};
 use webrtc::data_channel::data_channel_message::DataChannelMessage;
 
-use crate::app::app_event::AppEventClient;
 use crate::app::event::BasicEvent;
+use crate::client::payload::send_message;
+use crate::app::app_event::AppEventClient;
 use crate::app::event::BasicEventSenderExt;
 use crate::app::file_manager::{FileId, SpeedReport};
 use crate::app::file_manager::{FileProgressReport, InputFile, MetaData};
-use crate::client::packet;
-use crate::client::payload::send_message;
+
+
+#[derive(Default)]
+pub enum Mode {
+    #[default]
+    None,
+    Metadata(u32),
+    BinaryData(u32),
+}
+
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Message {
-    TextMessage(String), // TODO: reserved for potential future text chat functionality
-    FilePacketReceived(SpeedReport), // Speed-monitoring-related message
-    FileReceived(FileId), // To make sure a file was successfully delivered
+    /// TODO: reserved for potential future text chat functionality
+    TextMessage(String),
+    /// Notify the other side the following binary will contain file's metadata
+    MetadataNotification(u32),
+    MetadataLast(),
+    /// Notify the other side the following binary will contain file's binary data
+    BinaryDataNotification(u32),
+    BinaryDataLast(),
+    /// Speed-monitoring-related message
+    FilePacketReceived(SpeedReport),
+    /// To make sure a file was successfully delivered
+    FileReceived(FileId),
 }
 
 // Handles files, folder structures, empty folders and empty files + file messages
@@ -32,132 +49,126 @@ pub async fn handle_message(
     channel: Arc<RTCDataChannel>,
     buffer_watch_rx: &mut watch::Receiver<bool>,
     sender: UnboundedSender<BasicEvent>,
+    mode: Arc<Mutex<Mode>>,
     metadata_map: Arc<Mutex<HashMap<usize, MetaData>>>,
     metadata_bytes_map: Arc<Mutex<HashMap<usize, Vec<u8>>>>,
 ) -> color_eyre::Result<()> {
     match msg.is_string {
-        // Handle messages
+        // Handle messages (and a little bit of files)
         true => {
+            let mut last_flag = false;
             let json = String::from_utf8(msg.data.to_vec())?;
             let message: Message = serde_json::from_str(&json)?;
-            sender
-                .send_event(AppEventClient::MessageReceived(message))
-                .await;
-        }
-        // Handle file meta and data
-        false => {
-            let entry: MsgPackEntry = rmpp::unpack(&msg.data)?;
-            let packet = packet::Packet::new(entry)?;
 
-            // Process the data
-            if packet.meta {
-                // Metadata
-                let metadata = metadata_map.lock().await;
-
-                // Ignore if it's already in
-                if metadata.get(&packet.id).is_none() {
-                    let mut meta_bytes_map = metadata_bytes_map.lock().await; // lock mutex
-                    if let Some(bytes) = meta_bytes_map.get_mut(&packet.id) {
-                        bytes.extend(packet.binary);
-                    } else {
-                        meta_bytes_map.insert(packet.id, packet.binary);
-                    }
-                }
-            } else {
-                // File data
-                let mut metadata_map = metadata_map.lock().await;
-                if let Some(metadata) = metadata_map.get_mut(&packet.id) {
-                    metadata.progress_bytes += packet.binary.len();
-                    append_data_to_file(metadata.get_path(), &packet.binary)?;
-
-                    let progress = (metadata.progress_bytes as f64) / (metadata.size as f64);
-                    sender
-                        .send_event(AppEventClient::InputFileProgress(FileProgressReport::new(
-                            packet.id, progress,
-                        )))
-                        .await;
-                    sender
-                        .send_event(AppEventClient::ReportFileSpeed(SpeedReport::new(
-                            packet.id,
-                            packet.binary.len(),
-                        )))
-                        .await;
-
-                    // Report to the other client
-                    send_message(
-                        channel.clone(),
-                        buffer_watch_rx,
-                        Message::FilePacketReceived(SpeedReport::new(
-                            packet.id,
-                            packet.binary.len(),
-                        )),
-                    )
-                    .await?;
-                }
+            match message {
+                Message::MetadataNotification(id) => { *mode.lock().await = Mode::Metadata(id) },
+                Message::BinaryDataNotification(id) => { *mode.lock().await = Mode::BinaryData(id) },
+                Message::MetadataLast() => last_flag = true,
+                Message::BinaryDataLast() => last_flag = true,
+                _ => ()
             }
 
-            // Do stuff if last
-            if packet.last {
-                if packet.meta {
-                    let meta_bytes_map = metadata_bytes_map.lock().await;
-                    if let Some(bytes) = meta_bytes_map.get(&packet.id) {
-                        //
-                        let meta_string = String::from_utf8_lossy(bytes);
-                        let mut metadata = metadata_map.lock().await;
-                        let value: MetaData = serde_json::from_str(&meta_string)?;
-                        metadata.insert(packet.id, value.clone());
-                        create_folder_structure(&value)?;
+            sender.send_event(AppEventClient::MessageReceived(message)).await;
 
-                        if !value.is_dir {
-                            if value.size > 0 {
-                                sender
-                                    .send_event(AppEventClient::InputFileNew(InputFile::new(
-                                        packet.id, value,
-                                    )))
-                                    .await;
+            // Do stuff if last
+            if last_flag {
+                match *mode.lock().await {
+                    Mode::Metadata(id) => {
+                        let id = id as usize;
+                        let meta_bytes_map = metadata_bytes_map.lock().await;
+                        if let Some(bytes) = meta_bytes_map.get(&id) {
+                            //
+                            let meta_string = String::from_utf8_lossy(bytes);
+                            let mut metadata = metadata_map.lock().await;
+                            let value: MetaData = serde_json::from_str(&meta_string)?;
+                            metadata.insert(id, value.clone());
+                            create_folder_structure(&value)?;
+
+                            if !value.is_dir {
+                                if value.size > 0 {
+                                    sender.send_event(AppEventClient::InputFileNew(InputFile::new(
+                                        id, value,
+                                    ))).await;
+                                } else {
+                                    create_file(value.get_path(), false)?;
+                                    sender.send_event(AppEventClient::InputFileNew(InputFile::new(
+                                        id, value,
+                                    ))).await; // Creates the file in the UI
+                                    sender.send_event(AppEventClient::InputFileProgress(
+                                        FileProgressReport::new(id, 1.0),
+                                    )).await; // Updates the progress
+                                    send_message(
+                                        channel.clone(),
+                                        buffer_watch_rx,
+                                        Message::FileReceived(id),
+                                    ).await?; // Reports back
+                                }
                             } else {
-                                create_file(value.get_path(), false)?;
-                                sender
-                                    .send_event(AppEventClient::InputFileNew(InputFile::new(
-                                        packet.id, value,
-                                    )))
-                                    .await; // Creates the file in the UI
-                                sender
-                                    .send_event(AppEventClient::InputFileProgress(
-                                        FileProgressReport::new(packet.id, 1.0),
-                                    ))
-                                    .await; // Updates the progress
+                                // Report to the other client
                                 send_message(
                                     channel.clone(),
                                     buffer_watch_rx,
-                                    Message::FileReceived(packet.id),
-                                )
-                                .await?; // Reports back
+                                    Message::FileReceived(id),
+                                ).await?; // Should be fine
                             }
+                        }
+                    },
+                    Mode::BinaryData(id) => {
+                        let id = id as usize;
+                        let mut metadata = metadata_map.lock().await;
+                        if let Some(metadata) = metadata.get_mut(&id) {
+                            remove_part_ext(metadata.get_path())?;
+                        }
+
+                        // Report to the other client
+                        send_message(
+                            channel.clone(),
+                            buffer_watch_rx,
+                            Message::FileReceived(id),
+                        ).await?;
+                    },
+                    _ => ()
+                }
+
+            }
+        }
+        // Handle file meta and data
+        false => {
+            // Process the data
+            match *mode.lock().await {
+                Mode::Metadata(id) => {
+                    let id = id as usize;
+                    let metadata = metadata_map.lock().await;
+
+                    // Ignore if it's already in
+                    if metadata.get(&id).is_none() {
+                        let mut meta_bytes_map = metadata_bytes_map.lock().await; // lock mutex
+                        if let Some(bytes) = meta_bytes_map.get_mut(&id) {
+                            bytes.extend(msg.data);
                         } else {
-                            // Report to the other client
-                            send_message(
-                                channel.clone(),
-                                buffer_watch_rx,
-                                Message::FileReceived(packet.id),
-                            )
-                            .await?; // Should be fine
+                            meta_bytes_map.insert(id, msg.data.to_vec());
                         }
                     }
-                } else {
-                    let mut metadata = metadata_map.lock().await;
-                    if let Some(metadata) = metadata.get_mut(&packet.id) {
-                        remove_part_ext(metadata.get_path())?;
-                    }
+                },
+                Mode::BinaryData(id) => {
+                    let id = id as usize;
+                    let mut metadata_map = metadata_map.lock().await;
+                    if let Some(metadata) = metadata_map.get_mut(&id) {
+                        metadata.progress_bytes += msg.data.len();
+                        append_data_to_file(metadata.get_path(), &msg.data)?;
 
-                    // Report to the other client
-                    send_message(
-                        channel.clone(),
-                        buffer_watch_rx,
-                        Message::FileReceived(packet.id),
-                    )
-                    .await?;
-                }
+                        let progress = (metadata.progress_bytes as f64) / (metadata.size as f64);
+                        sender.send_event(AppEventClient::InputFileProgress(FileProgressReport::new(id, progress))).await;
+                        sender.send_event(AppEventClient::ReportFileSpeed(SpeedReport::new(id, msg.data.len()))).await;
+
+                        // Report to the other client
+                        send_message(
+                            channel.clone(), buffer_watch_rx,
+                            Message::FilePacketReceived(SpeedReport::new(id, msg.data.len())),
+                        ).await?;
+                    }
+                },
+                _ => ()
             }
         }
     }
@@ -169,8 +180,7 @@ fn create_folder_structure(metadata: &MetaData) -> color_eyre::Result<()> {
     if metadata.is_dir {
         create_dir_all(metadata.get_path())?;
     } else if let Some(parent) = metadata.get_path().parent()
-        && !parent.exists()
-        && parent.to_string_lossy() != ""
+        && !parent.exists() && parent.to_string_lossy() != ""
     {
         create_dir_all(parent)?;
     }

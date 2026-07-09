@@ -2,10 +2,10 @@ use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::{
     app::{
-        app_event::{AppEvent, AppEventServer},
         app_main::App,
-        handlers::app_handler::AppHandler,
         models::SyncRoom,
+        handlers::app_handler::AppHandler,
+        app_event::{AppEvent, AppEventServer}
     },
     server::types::{RoomUser, UserMessage},
 };
