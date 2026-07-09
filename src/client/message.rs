@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::io::Write;
 use std::path::PathBuf;
+use std::time::Instant;
 use std::collections::HashMap;
 use tokio::sync::{Mutex, watch};
 use std::ffi::{OsStr, OsString};
@@ -16,6 +17,35 @@ use crate::app::app_event::AppEventClient;
 use crate::app::event::BasicEventSenderExt;
 use crate::app::file_manager::{FileId, SpeedReport};
 use crate::app::file_manager::{FileProgressReport, InputFile, MetaData};
+
+
+#[derive(Default)]
+pub struct MessageHandlerState {
+    mode: Mode,
+    counter: SpeedCounterHandler,
+}
+
+pub struct SpeedCounterHandler {
+    init_flag: bool,
+    bytes: u32,
+    last_speed_report: Instant,
+}
+impl Default for SpeedCounterHandler {
+    fn default() -> Self {
+        Self { init_flag: false, bytes: 0, last_speed_report: Instant::now() }
+    }
+}
+impl SpeedCounterHandler {
+    pub fn clock(&mut self, bytes: u32) -> bool {
+        self.bytes += bytes;
+        self.init_flag || self.last_speed_report.elapsed().as_secs() >= 3
+    }
+    pub fn reset(&mut self) {
+        self.init_flag = false;
+        self.bytes = 0;
+        self.last_speed_report = Instant::now();
+    }
+}
 
 
 #[derive(Default)]
@@ -38,7 +68,7 @@ pub enum Message {
     BinaryDataNotification(u32),
     BinaryDataLast(),
     /// Speed-monitoring-related message
-    FilePacketReceived(SpeedReport),
+    SpeedReport(SpeedReport),
     /// To make sure a file was successfully delivered
     FileReceived(FileId),
 }
@@ -49,7 +79,7 @@ pub async fn handle_message(
     channel: Arc<RTCDataChannel>,
     buffer_watch_rx: &mut watch::Receiver<bool>,
     sender: UnboundedSender<BasicEvent>,
-    mode: Arc<Mutex<Mode>>,
+    state: Arc<Mutex<MessageHandlerState>>,
     metadata_map: Arc<Mutex<HashMap<usize, MetaData>>>,
     metadata_bytes_map: Arc<Mutex<HashMap<usize, Vec<u8>>>>,
 ) -> color_eyre::Result<()> {
@@ -61,8 +91,8 @@ pub async fn handle_message(
             let message: Message = serde_json::from_str(&json)?;
 
             match message {
-                Message::MetadataNotification(id) => { *mode.lock().await = Mode::Metadata(id) },
-                Message::BinaryDataNotification(id) => { *mode.lock().await = Mode::BinaryData(id) },
+                Message::MetadataNotification(id) => { state.lock().await.mode = Mode::Metadata(id) },
+                Message::BinaryDataNotification(id) => { state.lock().await.mode = Mode::BinaryData(id) },
                 Message::MetadataLast() => last_flag = true,
                 Message::BinaryDataLast() => last_flag = true,
                 _ => ()
@@ -72,7 +102,7 @@ pub async fn handle_message(
 
             // Do stuff if last
             if last_flag {
-                match *mode.lock().await {
+                match state.lock().await.mode {
                     Mode::Metadata(id) => {
                         let id = id as usize;
                         let meta_bytes_map = metadata_bytes_map.lock().await;
@@ -135,7 +165,8 @@ pub async fn handle_message(
         // Handle file meta and data
         false => {
             // Process the data
-            match *mode.lock().await {
+            let mut state_locked = state.lock().await;
+            match state_locked.mode {
                 Mode::Metadata(id) => {
                     let id = id as usize;
                     let metadata = metadata_map.lock().await;
@@ -159,13 +190,16 @@ pub async fn handle_message(
 
                         let progress = (metadata.progress_bytes as f64) / (metadata.size as f64);
                         sender.send_event(AppEventClient::InputFileProgress(FileProgressReport::new(id, progress))).await;
-                        sender.send_event(AppEventClient::ReportFileSpeed(SpeedReport::new(id, msg.data.len()))).await;
 
-                        // Report to the other client
-                        send_message(
-                            channel.clone(), buffer_watch_rx,
-                            Message::FilePacketReceived(SpeedReport::new(id, msg.data.len())),
-                        ).await?;
+                        // Report speed every few seconds
+                        if state_locked.counter.clock(msg.data.len() as u32) {
+                            sender.send_event(AppEventClient::ReportFileSpeed(SpeedReport::new(id, state_locked.counter.bytes))).await;
+                            send_message(
+                                channel.clone(), buffer_watch_rx,
+                                Message::SpeedReport(SpeedReport::new(id, state_locked.counter.bytes)),
+                            ).await?;
+                            state_locked.counter.reset();
+                        }
                     }
                 },
                 _ => ()

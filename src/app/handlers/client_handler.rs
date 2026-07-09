@@ -133,7 +133,7 @@ fn on_disconnected(app: &mut App) {
 fn on_message_received(app: &mut App, message: Message) {
     match message {
         Message::TextMessage(_) => {}, // TODO: implement
-        Message::FilePacketReceived(report) => {
+        Message::SpeedReport(report) => {
             app.file_manager.add_output_report(report);
         },
         Message::FileReceived(id) => {

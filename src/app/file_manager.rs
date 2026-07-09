@@ -1,13 +1,14 @@
+use walkdir::WalkDir;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::VecDeque,
     fs,
-    path::{Path, PathBuf},
     sync::atomic,
     time::SystemTime,
+    collections::VecDeque,
+    path::{Path, PathBuf},
 };
-use walkdir::WalkDir;
+
 
 pub type FileId = usize;
 static NEXT_OUTPUT_FILEID: atomic::AtomicUsize = atomic::AtomicUsize::new(0);
@@ -113,12 +114,12 @@ impl FileManager {
     }
     pub fn add_input_report(&mut self, report: SpeedReport) {
         if let Some(output_file) = self.input_map.get_mut(&report.file_id) {
-            output_file.speed_counter.add_report(report);
+            output_file.speed_counter.update(report);
         }
     }
     pub fn add_output_report(&mut self, report: SpeedReport) {
         if let Some(output_file) = self.output_map.get_mut(&report.file_id) {
-            output_file.speed_counter.add_report(report);
+            output_file.speed_counter.update(report);
         }
     }
     // in seconds
@@ -220,7 +221,7 @@ impl ProgressFile for OutputFile {
         self.finished
     }
     fn get_speed(&self) -> f64 {
-        self.speed_counter.get_speed().unwrap_or(0.0)
+        self.speed_counter.speed
     }
     fn get_meta(&self) -> &MetaData {
         &self.meta
@@ -255,7 +256,7 @@ impl ProgressFile for InputFile {
         self.progress >= 1.0
     }
     fn get_speed(&self) -> f64 {
-        self.speed_counter.get_speed().unwrap_or(0.0)
+        self.speed_counter.speed
     }
     fn get_meta(&self) -> &MetaData {
         &self.meta
@@ -342,54 +343,39 @@ impl FileProgressReport {
 pub struct SpeedReport {
     file_id: FileId,
     timestamp: SystemTime,
-    bytes: usize,
+    bytes: u32,
 }
 impl SpeedReport {
-    pub fn new(file_id: FileId, bytes: usize) -> Self {
-        Self {
-            file_id,
-            bytes,
-            timestamp: SystemTime::now(),
-        }
+    pub fn new(file_id: FileId, bytes: u32) -> Self {
+        Self { file_id, bytes, timestamp: SystemTime::now() }
     }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SpeedCounter {
-    report_buffer: VecDeque<SpeedReport>,
+    init_flag: bool,
+    speed: f64,
+    timestamp: SystemTime,
 }
 impl Default for SpeedCounter {
     fn default() -> Self {
-        Self {
-            report_buffer: VecDeque::with_capacity(SpeedCounter::CAPACITY),
-        }
+        Self { init_flag: false, speed: 0.0, timestamp: SystemTime::now() }
     }
 }
 impl SpeedCounter {
-    const CAPACITY: usize = 10;
-
-    fn add_report(&mut self, report: SpeedReport) {
-        if self.report_buffer.len() == SpeedCounter::CAPACITY {
-            self.report_buffer.pop_front();
-        }
-        self.report_buffer.push_back(report);
-    }
-    fn get_speed(&self) -> Option<f64> {
-        if self.report_buffer.len() > 1 {
-            let beginning = self.report_buffer[0].timestamp;
-            let end = self.report_buffer[self.report_buffer.len() - 1].timestamp;
-            let duration = end.duration_since(beginning).unwrap(); // Should be fine since the messages are ordered
-
-            let mut byte_sum: f64 = 0.0;
-            for i in 1..self.report_buffer.len() {
-                byte_sum += self.report_buffer[i].bytes as f64;
-            }
-
-            let megabits = (byte_sum * 8.0) / 1_000_000.0;
-            let speed = megabits / duration.as_secs_f64(); // Mbps
-            Some(speed)
+    fn update(&mut self, report: SpeedReport) {
+        if !self.init_flag {
+            self.timestamp = report.timestamp;
+            self. init_flag = true;
         } else {
-            None
+            // Calculate
+            let duration = report.timestamp.duration_since(self.timestamp).unwrap(); // Should be fine since the messages are ordered
+            let megabits = ((report.bytes * 8) as f64) / 1_000_000.0;
+            let speed = megabits / duration.as_secs_f64(); // Mbps
+
+            // Update
+            self.timestamp = report.timestamp;
+            self.speed = if self.speed == 0.0 { speed } else { self.speed + (speed - self.speed) * 0.75 } // Lerp
         }
     }
 }

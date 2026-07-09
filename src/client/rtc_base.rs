@@ -18,8 +18,8 @@ use crate::app::event::BasicEvent;
 use crate::app::file_manager::MetaData;
 use crate::app::models::{ErrorTX, Maid};
 use crate::app::event::BasicEventSenderExt;
-use crate::client::message::{Mode, handle_message};
 use crate::app::app_event::{AppEventClient, DebugDataChannel};
+use crate::client::message::{MessageHandlerState, handle_message};
 
 
 /// File output KiB threshold
@@ -194,7 +194,7 @@ fn on_message(
     sender: UnboundedSender<BasicEvent>,
 ) {
     let channel = dc.clone();
-    let mode = Arc::new(Mutex::new(Mode::default()));
+    let state = Arc::new(Mutex::new(MessageHandlerState::default()));
     let metadata_map = Arc::new(Mutex::new(HashMap::<usize, MetaData>::new()));
     let metadata_bytes_map = Arc::new(Mutex::new(HashMap::<usize, Vec<u8>>::new()));
 
@@ -202,7 +202,7 @@ fn on_message(
         let channel = channel.clone();
         let buffer_watch_rx = buffer_watch_rx.clone();
         let sender = sender.clone();
-        let mode = mode.clone();
+        let state = state.clone();
         let metadata_map = metadata_map.clone();
         let metadata_bytes_map = metadata_bytes_map.clone();
         let error_tx = error_tx.clone();
@@ -214,7 +214,7 @@ fn on_message(
                 channel,
                 buffer_watch_rx,
                 sender,
-                mode,
+                state,
                 metadata_map,
                 metadata_bytes_map,
             )
