@@ -193,10 +193,10 @@ pub async fn handle_message(
 
                         // Report speed every few seconds
                         if state_locked.counter.clock(msg.data.len() as u32) {
-                            sender.send_event(AppEventClient::ReportFileSpeed(SpeedReport::new(id, state_locked.counter.bytes))).await;
+                            sender.send_event(AppEventClient::ReportFileSpeed(SpeedReport::new(state_locked.counter.bytes))).await;
                             send_message(
                                 channel.clone(), buffer_watch_rx,
-                                Message::SpeedReport(SpeedReport::new(id, state_locked.counter.bytes)),
+                                Message::SpeedReport(SpeedReport::new(state_locked.counter.bytes)),
                             ).await?;
                             state_locked.counter.reset();
                         }

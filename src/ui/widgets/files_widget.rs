@@ -1,18 +1,19 @@
-use crossterm::event::{KeyCode, KeyEvent};
 use indexmap::IndexMap;
-use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
+use ratatui_macros::line;
+use ratatui_macros::horizontal;
 use ratatui::{prelude::*, widgets::*};
 use ratatui::{style::Style, symbols::border};
-use ratatui_macros::horizontal;
-use ratatui_macros::line;
+use crossterm::event::{KeyCode, KeyEvent};
+use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use tui_widget_list::{ListBuilder, ListState as WidgetListState, ListView};
 
-use crate::app::app_event::AppEvent;
-use crate::app::app_main::App;
-use crate::app::file_manager::{FileId, FileManager, ProgressFile};
 use crate::ui::theme::Theme;
+use crate::app::app_main::App;
+use crate::app::app_event::AppEvent;
+use crate::app::file_manager::{FileId, FileManager, IOFile};
 use crate::ui::utils::{
-    BlockDefault, CollapsedBorder, CombinedWidgetState, ScrollbarStateExt, Shortcut, StringExt,
+    BlockDefault, CollapsedBorder, CombinedWidgetState,
+    ScrollbarStateExt, Shortcut, StringExt,
     WidgetListStateExt,
 };
 
@@ -100,7 +101,7 @@ impl CombinedWidgetState for FileListWidgetState {
 }
 
 // Rebuild it on the fly for simplicity
-struct FileListWidget<'a, V: ProgressFile> {
+struct FileListWidget<'a, V: IOFile> {
     theme: &'a Theme,
     title: Option<String>,
     borders: Borders,
@@ -110,7 +111,7 @@ struct FileListWidget<'a, V: ProgressFile> {
     estimate: f64,
     completed: bool,
 }
-impl<'a, V: ProgressFile> FileListWidget<'a, V> {
+impl<'a, V: IOFile> FileListWidget<'a, V> {
     #[allow(clippy::too_many_arguments)] // TODO: investigate
     fn new(
         theme: &'a Theme,
@@ -134,7 +135,7 @@ impl<'a, V: ProgressFile> FileListWidget<'a, V> {
         }
     }
 }
-impl<'a, V: ProgressFile> StatefulWidget for FileListWidget<'a, V> {
+impl<'a, V: IOFile> StatefulWidget for FileListWidget<'a, V> {
     type State = FileListWidgetState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
@@ -197,12 +198,12 @@ pub fn files_widget(app: &mut App, area: Rect, buf: &mut Buffer, builder: &mut F
     let a: [Rect; 2] = layout.areas(containing_block.inner(area));
 
     // File lists init
-    let input_speed = FileManager::get_average_speed(&app.file_manager.input_map);
-    let input_estimate = FileManager::get_estimate(&app.file_manager.input_map);
+    let input_speed = app.file_manager.input_speed_counter.speed;
+    let input_estimate = FileManager::get_estimate(&app.file_manager.input_map, input_speed);
     let input_completed = FileManager::get_completion(&app.file_manager.input_map);
 
-    let output_speed = FileManager::get_average_speed(&app.file_manager.output_map);
-    let output_estimate = FileManager::get_estimate(&app.file_manager.output_map);
+    let output_speed = app.file_manager.output_speed_counter.speed;
+    let output_estimate = FileManager::get_estimate(&app.file_manager.output_map, output_speed);
     let output_completed = FileManager::get_completion(&app.file_manager.output_map);
 
     let input_files = app.file_manager.get_input_map();
@@ -246,7 +247,7 @@ fn file_list_widget<'a, K, V>(
 ) -> ListView<'a, Gauge<'a>>
 where
     K: std::hash::Hash + Eq,
-    V: ProgressFile,
+    V: IOFile,
 {
     // Dang, this crate is clean
     let keys = files.keys();
@@ -273,7 +274,7 @@ where
     ListView::new(builder, files.len())
 }
 
-fn progress_gauge<'a, F: ProgressFile>(
+fn progress_gauge<'a, F: IOFile>(
     theme: &Theme,
     file: &'a F,
     fg_color: Color,
@@ -290,20 +291,9 @@ fn progress_gauge<'a, F: ProgressFile>(
     }
 
     // Add check mark
-    block = if !file.get_finished() {
-        block
-    } else {
+    block = if !file.get_finished() { block } else {
         block.title(line!(CHECK_MARK).right_aligned())
     };
-
-    // Add speed
-    if file.get_progress() > 0.0 {
-        block = if file.get_finished() {
-            block
-        } else {
-            block.title_bottom(line!(format_speed(file.get_speed())).right_aligned())
-        };
-    }
 
     // Set gauge style
     let gauge_style = if file.get_progress() >= 1.0 {
@@ -324,9 +314,6 @@ fn progress_gauge<'a, F: ProgressFile>(
         .fg(theme.text.clone())
 }
 
-fn format_speed(speed: f64) -> String {
-    format!("[{:.1} Mbps]", speed)
-}
 fn format_speed_estimate(speed: f64, estimate: f64) -> String {
     format!(
         "[{:.1} Mbps, ETA: {}]",

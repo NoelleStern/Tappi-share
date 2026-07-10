@@ -16,20 +16,24 @@ fn get_new_output_file_id() -> usize {
     NEXT_OUTPUT_FILEID.fetch_add(1, atomic::Ordering::Relaxed) // Get and increment
 }
 
+#[derive(Default)]
 pub struct FileManager {
-    pub ignore_empty: bool,                 // Should it ignore empty directories
-    pub output_queue: VecDeque<OutputFile>, // Regulates the queue
-    pub input_map: IndexMap<FileId, InputFile>, // Input file list
-    pub output_map: IndexMap<FileId, OutputFile>, // Output file list
+    /// Should it ignore empty directories
+    pub ignore_empty: bool,
+    /// Regulates the queue
+    pub output_queue: VecDeque<OutputFile>,
+    /// Input file list
+    pub input_map: IndexMap<FileId, InputFile>,
+    /// Output file list
+    pub output_map: IndexMap<FileId, OutputFile>,
+    /// Monitors download speed
+    pub input_speed_counter: SpeedCounter,
+    /// Monitors upload speed
+    pub output_speed_counter: SpeedCounter,
 }
 impl FileManager {
     pub fn new(ignore_empty: bool) -> Self {
-        Self {
-            ignore_empty,
-            output_queue: VecDeque::default(),
-            input_map: IndexMap::default(),
-            output_map: IndexMap::default(),
-        }
+        Self { ignore_empty, ..Default::default() }
     }
 }
 impl FileManager {
@@ -112,18 +116,8 @@ impl FileManager {
             output_file.finished = true;
         }
     }
-    pub fn add_input_report(&mut self, report: SpeedReport) {
-        if let Some(output_file) = self.input_map.get_mut(&report.file_id) {
-            output_file.speed_counter.update(report);
-        }
-    }
-    pub fn add_output_report(&mut self, report: SpeedReport) {
-        if let Some(output_file) = self.output_map.get_mut(&report.file_id) {
-            output_file.speed_counter.update(report);
-        }
-    }
     // in seconds
-    pub fn get_estimate<P: ProgressFile>(files: &IndexMap<FileId, P>) -> f64 {
+    pub fn get_estimate<P: IOFile>(files: &IndexMap<FileId, P>, speed: f64) -> f64 {
         let mut total_size: f64 = 0.0;
         for (_i, f) in files {
             if !f.get_meta().is_dir && !f.get_finished() {
@@ -132,31 +126,12 @@ impl FileManager {
         }
 
         if total_size > 0.0 {
-            let speed = Self::get_average_speed(files);
             (total_size * 8.0 / 1_000_000.0) / speed
         } else {
             0.0
         }
     }
-    pub fn get_average_speed<P: ProgressFile>(files: &IndexMap<FileId, P>) -> f64 {
-        let mut speed: f64 = 0.0;
-        let mut counter: usize = 0;
-
-        for (_i, f) in files {
-            let s = f.get_speed();
-            if s > 0.0 {
-                speed += s;
-                counter += 1;
-            }
-        }
-
-        if counter > 0 && speed > 0.0 {
-            speed / (counter as f64)
-        } else {
-            0.0
-        }
-    }
-    pub fn get_completion<P: ProgressFile>(files: &IndexMap<FileId, P>) -> bool {
+    pub fn get_completion<P: IOFile>(files: &IndexMap<FileId, P>) -> bool {
         if !files.is_empty() {
             let mut result = true;
             for (_i, f) in files {
@@ -171,11 +146,10 @@ impl FileManager {
     }
 }
 
-pub trait ProgressFile {
+pub trait IOFile {
     fn get_name(&self) -> Option<&str>;
     fn get_progress(&self) -> f64;
     fn get_finished(&self) -> bool;
-    fn get_speed(&self) -> f64;
     fn get_meta(&self) -> &MetaData;
 }
 
@@ -185,7 +159,6 @@ pub struct OutputFile {
     pub meta: MetaData,
     pub progress: f64,
     pub finished: bool,
-    pub speed_counter: SpeedCounter,
 }
 impl OutputFile {
     fn new(path: PathBuf, base_path: Option<PathBuf>, is_dir: bool) -> color_eyre::Result<Self> {
@@ -201,31 +174,17 @@ impl OutputFile {
             meta,
             progress: 0.0,
             finished: false,
-            speed_counter: SpeedCounter::default(),
         })
     }
 }
-impl ProgressFile for OutputFile {
+impl IOFile for OutputFile {
     fn get_name(&self) -> Option<&str> {
         let name = self.meta.path.file_name();
-        if let Some(name) = name {
-            name.to_str()
-        } else {
-            None
-        }
+        if let Some(name) = name { name.to_str() } else { None }
     }
-    fn get_progress(&self) -> f64 {
-        self.progress
-    }
-    fn get_finished(&self) -> bool {
-        self.finished
-    }
-    fn get_speed(&self) -> f64 {
-        self.speed_counter.speed
-    }
-    fn get_meta(&self) -> &MetaData {
-        &self.meta
-    }
+    fn get_progress(&self) -> f64 { self.progress }
+    fn get_finished(&self) -> bool { self.finished }
+    fn get_meta(&self) -> &MetaData { &self.meta }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -233,19 +192,13 @@ pub struct InputFile {
     pub id: FileId,
     pub meta: MetaData,
     pub progress: f64,
-    pub speed_counter: SpeedCounter,
 }
 impl InputFile {
     pub fn new(id: usize, meta: MetaData) -> Self {
-        Self {
-            id,
-            meta,
-            progress: 0.0,
-            speed_counter: SpeedCounter::default(),
-        }
+        Self { id, meta, progress: 0.0 }
     }
 }
-impl ProgressFile for InputFile {
+impl IOFile for InputFile {
     fn get_name(&self) -> Option<&str> {
         Some(&self.meta.name)
     }
@@ -254,9 +207,6 @@ impl ProgressFile for InputFile {
     }
     fn get_finished(&self) -> bool {
         self.progress >= 1.0
-    }
-    fn get_speed(&self) -> f64 {
-        self.speed_counter.speed
     }
     fn get_meta(&self) -> &MetaData {
         &self.meta
@@ -341,20 +291,19 @@ impl FileProgressReport {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SpeedReport {
-    file_id: FileId,
     timestamp: SystemTime,
     bytes: u32,
 }
 impl SpeedReport {
-    pub fn new(file_id: FileId, bytes: u32) -> Self {
-        Self { file_id, bytes, timestamp: SystemTime::now() }
+    pub fn new(bytes: u32) -> Self {
+        Self { bytes, timestamp: SystemTime::now() }
     }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SpeedCounter {
     init_flag: bool,
-    speed: f64,
+    pub speed: f64,
     timestamp: SystemTime,
 }
 impl Default for SpeedCounter {
@@ -363,7 +312,7 @@ impl Default for SpeedCounter {
     }
 }
 impl SpeedCounter {
-    fn update(&mut self, report: SpeedReport) {
+    pub fn update(&mut self, report: SpeedReport) {
         if !self.init_flag {
             self.timestamp = report.timestamp;
             self. init_flag = true;

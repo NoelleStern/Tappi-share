@@ -134,7 +134,7 @@ fn on_message_received(app: &mut App, message: Message) {
     match message {
         Message::TextMessage(_) => {}, // TODO: implement
         Message::SpeedReport(report) => {
-            app.file_manager.add_output_report(report);
+            app.file_manager.output_speed_counter.update(report)
         },
         Message::FileReceived(id) => {
             app.file_manager.set_output_finished(id);
@@ -143,7 +143,7 @@ fn on_message_received(app: &mut App, message: Message) {
     }
 }
 fn on_report_file_speed(app: &mut App, report: SpeedReport) {
-    app.file_manager.add_input_report(report);
+    app.file_manager.input_speed_counter.update(report)
 }
 fn on_file_progress(app: &mut App, progress_report: FileProgressReport, output: bool) {
     if output {
