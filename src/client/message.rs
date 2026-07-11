@@ -83,6 +83,8 @@ pub async fn handle_message(
     metadata_map: Arc<Mutex<HashMap<usize, MetaData>>>,
     metadata_bytes_map: Arc<Mutex<HashMap<usize, Vec<u8>>>>,
 ) -> color_eyre::Result<()> {
+    let mut state_locked = state.lock().await;
+
     match msg.is_string {
         // Handle messages (and a little bit of files)
         true => {
@@ -91,8 +93,8 @@ pub async fn handle_message(
             let message: Message = serde_json::from_str(&json)?;
 
             match message {
-                Message::MetadataNotification(id) => { state.lock().await.mode = Mode::Metadata(id) },
-                Message::BinaryDataNotification(id) => { state.lock().await.mode = Mode::BinaryData(id) },
+                Message::MetadataNotification(id) => state_locked.mode = Mode::Metadata(id),
+                Message::BinaryDataNotification(id) => state_locked.mode = Mode::BinaryData(id),
                 Message::MetadataLast() => last_flag = true,
                 Message::BinaryDataLast() => last_flag = true,
                 _ => ()
@@ -102,7 +104,7 @@ pub async fn handle_message(
 
             // Do stuff if last
             if last_flag {
-                match state.lock().await.mode {
+                match state_locked.mode {
                     Mode::Metadata(id) => {
                         let id = id as usize;
                         let meta_bytes_map = metadata_bytes_map.lock().await;
@@ -165,7 +167,6 @@ pub async fn handle_message(
         // Handle file meta and data
         false => {
             // Process the data
-            let mut state_locked = state.lock().await;
             match state_locked.mode {
                 Mode::Metadata(id) => {
                     let id = id as usize;
