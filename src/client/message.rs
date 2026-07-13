@@ -83,6 +83,7 @@ pub async fn handle_message(
     metadata_map: Arc<Mutex<HashMap<usize, MetaData>>>,
     metadata_bytes_map: Arc<Mutex<HashMap<usize, Vec<u8>>>>,
 ) -> color_eyre::Result<()> {
+    // Just lock it here. It's only used by this function and it's less error-prone to do it once like that
     let mut state_locked = state.lock().await;
 
     match msg.is_string {
