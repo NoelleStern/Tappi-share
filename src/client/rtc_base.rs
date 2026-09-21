@@ -36,9 +36,7 @@ pub struct WebConnection {
 impl WebConnection {
     pub async fn init(maid: Maid, args: ClientArgs) -> color_eyre::Result<()> {
         let wc = WebConnection::new(maid.clone(), &args).await?;
-        maid.event_tx
-            .send_event(AppEventClient::InitConnection(wc))
-            .await;
+        maid.event_tx.send_event(AppEventClient::InitConnection(wc)).await;
         Ok(())
     }
 
@@ -87,20 +85,33 @@ impl WebConnection {
         credential: Option<String>,
         additional_servers: &mut Option<Vec<String>>,
     ) -> RTCConfiguration {
-        let mut servers: Vec<String> = vec![];
+        // No credentials
+        let mut ice_servers = vec![
+            RTCIceServer {
+                urls: vec![
+                    "stun:stun.l.google.com:19302".to_owned(),
+                    "stun:stun1.l.google.com:19302".to_owned(),
+                    "stun:stun2.l.google.com:19302".to_owned(),
+                    "stun:stun3.l.google.com:19302".to_owned(),
+                    "stun:stun4.l.google.com:19302".to_owned(),
+                ],
+                ..Default::default()
+            },
+        ];
 
-        if let Some(additional_servers) = additional_servers {
-            servers.append(additional_servers);
+        // All credentials
+        if let Some(turn_urls) = additional_servers {
+            if !turn_urls.is_empty() {
+                ice_servers.push(RTCIceServer {
+                    urls: turn_urls.to_vec(),
+                    username: username.unwrap_or_default().to_string(),
+                    credential: credential.unwrap_or_default().to_string(),
+                });
+            }
         }
 
-        RTCConfiguration {
-            ice_servers: vec![RTCIceServer {
-                urls: servers,
-                username: username.unwrap_or_default(),
-                credential: credential.unwrap_or_default(),
-            }],
-            ..Default::default()
-        }
+        // Combine
+        RTCConfiguration { ice_servers, ..Default::default() }
     }
 }
 
@@ -114,28 +125,52 @@ fn attach_connection_handler(
         let etx = etx.clone();
 
         Box::pin(async move {
-            if state == RTCIceConnectionState::Failed {
-                etx.send_error(eyre!(state).wrap_err("ICE connection Failed"));
+            match state {
+                RTCIceConnectionState::Unspecified  => log::info!("RTCIceConnectionState::Unspecified"),
+                RTCIceConnectionState::New          => log::info!("RTCIceConnectionState::New"),
+                RTCIceConnectionState::Checking     => log::info!("RTCIceConnectionState::Checking"),
+                RTCIceConnectionState::Connected    => log::info!("RTCIceConnectionState::Connected"),
+                RTCIceConnectionState::Completed    => log::info!("RTCIceConnectionState::Completed"),
+                RTCIceConnectionState::Disconnected => log::info!("RTCIceConnectionState::Disconnected"),
+                RTCIceConnectionState::Closed       => log::info!("RTCIceConnectionState::Closed"),
+                RTCIceConnectionState::Failed       => {
+                    log::info!("RTCIceConnectionStateFailedUnspecified");
+                    etx.send_error(
+                        eyre!("ICE connection state: {:?}", state).wrap_err("ICE connection failed")
+                    );
+                }
             }
         })
     }));
 
+    pc.on_ice_candidate(Box::new(move |oc: Option<webrtc::ice_transport::ice_candidate::RTCIceCandidate>| {
+        Box::pin(async move {
+            if let Some(c) = oc { log::info!("{:#?}", c); }
+        })
+    }));
+    
     pc.on_peer_connection_state_change(Box::new(move |state: RTCPeerConnectionState| {
         let sender = sender.clone();
         let error_tx = error_tx.clone();
 
         Box::pin(async move {
             match state {
+                RTCPeerConnectionState::Unspecified => log::info!("RTCPeerConnectionState::Unspecified"),
+                RTCPeerConnectionState::New         => log::info!("RTCPeerConnectionState::New"),
+                RTCPeerConnectionState::Connecting  => log::info!("RTCPeerConnectionState::Connecting"),
+                RTCPeerConnectionState::Closed      => log::info!("RTCPeerConnectionState::Closed"),
                 RTCPeerConnectionState::Connected => {
+                    log::info!("RTCPeerConnectionState::Connected");
                     sender.send_event(AppEventClient::Connected).await;
                 }
                 RTCPeerConnectionState::Disconnected => {
+                    log::info!("RTCPeerConnectionState::Disconnected");
                     sender.send_event(AppEventClient::Disconnected).await;
                 }
                 RTCPeerConnectionState::Failed => {
+                    log::info!("RTCPeerConnectionState::Failed");
                     error_tx.send_error(eyre!(state).wrap_err("RTC connection failed"));
                 }
-                _ => {}
             }
         })
     }));
@@ -147,11 +182,7 @@ fn attach_channel_open_handler(dc: Arc<RTCDataChannel>, sender: UnboundedSender<
 
         move || {
             Box::pin(async move {
-                sender
-                    .send_event(AppEventClient::ChannelOpened(DebugDataChannel::new(
-                        dc.clone(),
-                    )))
-                    .await;
+                sender.send_event(AppEventClient::ChannelOpened(DebugDataChannel::new(dc.clone()))).await;
             })
         }
     }));
@@ -160,10 +191,7 @@ fn attach_channel_open_handler(dc: Arc<RTCDataChannel>, sender: UnboundedSender<
 async fn attach_buffer_handler(dc: Arc<RTCDataChannel>, buffer_watch_tx: watch::Sender<bool>) {
     dc.on_buffered_amount_low(Box::new(move || {
         let buffer_watch_tx = buffer_watch_tx.clone();
-
-        Box::pin(async move {
-            buffer_watch_tx.send(true).ok();
-        })
+        Box::pin(async move { buffer_watch_tx.send(true).ok(); })
     }))
     .await;
 }
@@ -175,16 +203,21 @@ pub async fn wait_for_ice_completion(pc: Arc<RTCPeerConnection>) {
     pc.on_ice_gathering_state_change(Box::new(move |state| {
         let tx = tx.clone();
         Box::pin(async move {
-            if state == RTCIceGathererState::Complete {
-                tx.send(true).ok();
+            match state {
+                RTCIceGathererState::Unspecified    => log::info!("RTCIceGathererState::Unspecified"),
+                RTCIceGathererState::New            => log::info!("RTCIceGathererState::New"),
+                RTCIceGathererState::Gathering      => log::info!("RTCIceGathererState::Gathering"),
+                RTCIceGathererState::Closed         => log::info!("RTCIceGathererState::Closed"),
+                RTCIceGathererState::Complete       => {
+                    log::info!("RTCIceGathererState::Complete");
+                    tx.send(true).ok();
+                },
             }
         })
     }));
 
     // Wait for ICE gathering to complete
-    while !*rx.borrow() {
-        rx.changed().await.ok();
-    }
+    while !*rx.borrow() { rx.changed().await.ok(); }
 }
 
 fn on_message(
@@ -218,10 +251,7 @@ fn on_message(
                 metadata_map,
                 metadata_bytes_map,
             )
-            .await
-            {
-                error_tx.send_error(err);
-            }
+            .await { error_tx.send_error(err); }
         })
     }));
 }
