@@ -22,8 +22,8 @@ use crate::{
     },
 };
 
-// Common: Connecting to server -> connected to server -> uuid sent -> uuid received ->
-//
+// Common: Connecting to server -> connected to server -> uuid sent -> uuid received 
+// ->
 // Impolite: offer sent -> answer received 
 // Common:                                 -> connection established
 // Polite:   offer received -> answer sent 
@@ -144,11 +144,12 @@ impl<S: SignalingInterface> Negotiator<S> {
 
             // If impolite - make an offer
             if !polite {
-                // Create an offer, confirm it and wait for all of the ice candidates
+                // Create an offer and wait for all of the ice candidates to gather
                 let offer = self.pc.create_offer(None).await?;
                 self.pc.set_local_description(offer.clone()).await?;
                 wait_for_ice_completion(self.pc.clone()).await;
 
+                // Send the offer
                 if let Some(local_desc) = self.pc.local_description().await {
                     self.signaling
                         .send_message(SignalingMessage::Offer(local_desc.sdp))
@@ -159,6 +160,8 @@ impl<S: SignalingInterface> Negotiator<S> {
                             HandshakeState::OfferSent,
                         ))
                         .await;
+                } else {
+                    log::error!("Failed to get updated local description for offer");
                 }
             }
         }
@@ -177,22 +180,25 @@ impl<S: SignalingInterface> Negotiator<S> {
         let remote_offer = RTCSessionDescription::offer(sdp)?;
         self.pc.set_remote_description(remote_offer).await?;
 
-        // Create an answer
+        // Create an answer and wait for all of the ice candidates to gather
         let answer = self.pc.create_answer(None).await?;
         self.pc.set_local_description(answer.clone()).await?;
         wait_for_ice_completion(self.pc.clone()).await;
 
         // Send the answer
-        self.signaling
-            .send_message(SignalingMessage::Answer(answer.sdp))
-            .await?;
+        if let Some(local_desc) = self.pc.local_description().await {
+            self.signaling
+                .send_message(SignalingMessage::Answer(local_desc.sdp))
+                .await?;
 
-        self.sender
-            .send_event(AppEventClient::UpdateHandshakeState(
-                HandshakeState::AnswerSent,
-            ))
-            .await;
-
+            self.sender
+                .send_event(AppEventClient::UpdateHandshakeState(
+                    HandshakeState::AnswerSent,
+                ))
+                .await;
+        } else {
+            log::error!("Failed to get updated local description for answer");
+        }
         Ok(())
     }
 
