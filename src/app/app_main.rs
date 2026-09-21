@@ -9,7 +9,7 @@ use crate::{
     server,
     cli::{Cli, Commands, SignalingSolutions},
     client::{
-        client_init::init,
+        client_init::{self},
         signaling::{negotiator::HandshakeState, signaling_manual::SignalingManual},
     },
     ui::{
@@ -164,6 +164,8 @@ impl App {
     }
 
     async fn error_loop(&mut self, terminal: &mut DefaultTerminal) -> color_eyre::Result<()> {
+        self.queue_redraw();
+
         // Simple error loop
         if self.error.is_some() {
             loop { // Event loop
@@ -171,6 +173,7 @@ impl App {
                 let event = self.events.next().await?;
                 match event {
                     BasicEvent::Tick => { self.on_tick(); },
+                    BasicEvent::Crossterm(crossterm::event::Event::Resize(_, _)) => self.queue_redraw(),
                     BasicEvent::Crossterm(crossterm::event::Event::Key(key_event)) => {
                         if  key_event.is_release()
                             && let KeyCode::Char('q') = key_event.code{
@@ -206,6 +209,7 @@ impl App {
     fn handle_tick_and_crossterm(&mut self, event: &BasicEvent) -> color_eyre::Result<()> {
         match event {
             BasicEvent::Tick => self.on_tick(),
+            BasicEvent::Crossterm(crossterm::event::Event::Resize(_, _)) => self.queue_redraw(),
             BasicEvent::Crossterm(crossterm::event::Event::Key(key_event)) => {
                 let mut app_events: Vec<AppEvent> = vec![];
 
@@ -262,6 +266,7 @@ impl App {
                 self.draw(terminal)?;
                 self.last_redraw = Instant::now();
             }
+
         Ok(())
     }
     fn queue_redraw(&mut self) { self.redraw = true; }
@@ -335,7 +340,7 @@ fn startup(app: &mut App, args: &Cli) -> color_eyre::Result<()> {
                 let error_tx = maid.error_tx.clone();
                 tokio::select! {
                     _ = token.cancelled() => {},
-                    result = init(maid, signaling_manual, args_client) => {
+                    result = client_init::init(maid, signaling_manual, args_client) => {
                         if let Err(err) = result { error_tx.send_error(err); }
                     },
                 }
