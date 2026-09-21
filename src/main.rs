@@ -1,12 +1,14 @@
 use crate::{app::app_main::App, cli::Cli, logger::init_logger};
 use clap::Parser;
 
+
+pub mod ui;
 pub mod app;
 pub mod cli;
 pub mod client;
 pub mod logger;
 pub mod server;
-pub mod ui;
+
 
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
