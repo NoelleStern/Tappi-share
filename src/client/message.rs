@@ -226,11 +226,7 @@ fn create_folder_structure(metadata: &MetaData) -> color_eyre::Result<()> {
 
 fn create_file(path: PathBuf, append_part: bool) -> color_eyre::Result<File> {
     // Couldn't create a file without wright permissions, but .append(true) provides those
-    let p = if append_part {
-        append_part_ext(path)
-    } else {
-        path
-    };
+    let p = if append_part { append_part_ext(path) } else { path };
     Ok(fs::OpenOptions::new().create(true).append(true).open(p)?)
 }
 fn append_data_to_file(path: PathBuf, data: &[u8]) -> color_eyre::Result<()> {
